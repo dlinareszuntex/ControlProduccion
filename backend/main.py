@@ -25,7 +25,7 @@ DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
     "database": os.getenv("DB_NAME", "boteo_db"),
     "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "postgres"),
+    "password": os.getenv("DB_PASSWORD", ".linares11"),
     "port": os.getenv("DB_PORT", "5432")
 }
 
@@ -115,12 +115,17 @@ class HistorialCompletoResponse(BaseModel):
 class OperarioDashboardDetalle(BaseModel):
     id_operario: int
     nombre: str
+    linea_produccion: Optional[str]
+    estacion: Optional[str]
+    tarea: Optional[str]
     ciclos: int
     promedio: Optional[float]
     estado: str
     eficiencia: Optional[float]
     pausas: int
     tiempo_pausas_min: float
+    en_pausa: bool
+    motivo_pausa: Optional[str]
 
 class ProblemaDetectado(BaseModel):
     tipo: str
@@ -799,12 +804,24 @@ async def obtener_historial_operario(
         )
 
 @app.get("/api/dashboard/resumen", response_model=DashboardResumenResponse)
-async def obtener_dashboard_resumen(fecha: str):
+async def obtener_dashboard_resumen(
+    fecha: str,
+    linea_produccion: Optional[str] = None,
+    estacion: Optional[str] = None,
+    tarea: Optional[str] = None,
+    id_operario: Optional[int] = None,
+    nombre: Optional[str] = None
+):
     """
     Obtiene el resumen del dashboard IT para una fecha específica.
     
     Parámetros:
     - fecha: Fecha en formato YYYY-MM-DD
+    - linea_produccion: Filtrar por línea de producción (opcional)
+    - estacion: Filtrar por estación (opcional)
+    - tarea: Filtrar por nombre de tarea (opcional)
+    - id_operario: Filtrar por ID de operario (opcional)
+    - nombre: Filtrar por nombre de operario (opcional, búsqueda parcial)
     """
     try:
         # Validar formato de fecha
@@ -885,11 +902,45 @@ async def obtener_dashboard_resumen(fecha: str):
             eficiencia_result = cursor.fetchone()
             eficiencia_promedio = float(eficiencia_result['eficiencia_promedio']) if eficiencia_result['eficiencia_promedio'] else None
             
-            # Obtener detalle de operarios
-            cursor.execute("""
+            # Construir condiciones de filtro
+            condiciones_filtro = ["o.activo = TRUE"]
+            parametros_filtro = []
+            
+            if linea_produccion:
+                condiciones_filtro.append("o.linea_produccion = %s")
+                parametros_filtro.append(linea_produccion)
+            
+            if estacion:
+                condiciones_filtro.append("o.estacion = %s")
+                parametros_filtro.append(estacion)
+            
+            if id_operario:
+                condiciones_filtro.append("o.id_operario = %s")
+                parametros_filtro.append(id_operario)
+            
+            if nombre:
+                condiciones_filtro.append("o.nombre ILIKE %s")
+                parametros_filtro.append(f"%{nombre}%")
+            
+            if tarea:
+                condiciones_filtro.append("EXISTS (SELECT 1 FROM Operario_Tarea ot JOIN Tareas t ON ot.id_tarea = t.id_tarea WHERE ot.id_operario = o.id_operario AND ot.activa = TRUE AND t.nombre_tarea ILIKE %s)")
+                parametros_filtro.append(f"%{tarea}%")
+            
+            where_clause = " AND ".join(condiciones_filtro)
+            
+            # Obtener detalle de operarios con información completa
+            # Construir la query sin f-string para evitar problemas con %s
+            query = """
                 SELECT 
                     o.id_operario,
                     o.nombre,
+                    o.linea_produccion,
+                    o.estacion,
+                    (SELECT t.nombre_tarea 
+                     FROM Operario_Tarea ot 
+                     JOIN Tareas t ON ot.id_tarea = t.id_tarea 
+                     WHERE ot.id_operario = o.id_operario AND ot.activa = TRUE 
+                     LIMIT 1) as tarea,
                     COALESCE((
                         SELECT COUNT(*) FROM Registros_Ciclos
                         WHERE id_operario = o.id_operario
@@ -930,11 +981,25 @@ async def obtener_dashboard_resumen(fecha: str):
                         WHERE id_operario = o.id_operario
                           AND fecha_registro = %s::date
                           AND finalizada = TRUE
-                    ), 0) as tiempo_pausas_min
+                    ), 0) as tiempo_pausas_min,
+                    EXISTS(
+                        SELECT 1 FROM Registros_Pausas
+                        WHERE id_operario = o.id_operario
+                          AND finalizada = FALSE
+                    ) as en_pausa,
+                    (SELECT motivo FROM Registros_Pausas
+                     WHERE id_operario = o.id_operario
+                       AND finalizada = FALSE
+                     ORDER BY hora_inicio_pausa DESC
+                     LIMIT 1) as motivo_pausa
                 FROM Operarios o
-                WHERE o.activo = TRUE
+                WHERE """ + where_clause + """
                 ORDER BY o.nombre
-            """, (fecha, fecha, fecha, fecha, fecha, fecha))
+            """
+            
+            # Combinar parámetros: primero los filtros, luego las 6 fechas para las subconsultas
+            parametros_totales = parametros_filtro + [fecha, fecha, fecha, fecha, fecha, fecha]
+            cursor.execute(query, tuple(parametros_totales))
             
             operarios_data = cursor.fetchall()
             
@@ -949,12 +1014,17 @@ async def obtener_dashboard_resumen(fecha: str):
                 operarios.append(OperarioDashboardDetalle(
                     id_operario=op['id_operario'],
                     nombre=op['nombre'],
+                    linea_produccion=op['linea_produccion'],
+                    estacion=op['estacion'],
+                    tarea=op['tarea'],
                     ciclos=op['ciclos'],
                     promedio=float(op['promedio']) if op['promedio'] else None,
                     estado=op['estado'],
                     eficiencia=float(op['eficiencia']) if op['eficiencia'] else None,
                     pausas=op['pausas'],
-                    tiempo_pausas_min=float(op['tiempo_pausas_min'])
+                    tiempo_pausas_min=float(op['tiempo_pausas_min']),
+                    en_pausa=op['en_pausa'],
+                    motivo_pausa=op['motivo_pausa']
                 ))
                 
                 # Detectar problemas
@@ -1028,29 +1098,43 @@ async def obtener_reporte_pausas(fecha_inicio: str, fecha_fin: str):
             pausas_por_motivo = []
             recomendaciones = []
             
-            for pausa in pausas_data:
-                motivo = pausa['motivo'] or 'Sin motivo'
-                lineas = pausa['lineas_afectadas'] or []
-                
+            # Si no hay pausas, mostrar mensaje informativo pero aún así generar reporte
+            if not pausas_data or len(pausas_data) == 0:
                 pausas_por_motivo.append(PausasPorMotivo(
-                    motivo=motivo,
-                    total_pausas=pausa['total_pausas'],
-                    tiempo_total_min=float(pausa['tiempo_total_min']),
-                    promedio_duracion_min=float(pausa['promedio_duracion_min']),
-                    operarios_afectados=pausa['operarios_afectados'],
-                    lineas_afectadas=list(lineas) if lineas else []
+                    motivo="Sin pausas registradas",
+                    total_pausas=0,
+                    tiempo_total_min=0.0,
+                    promedio_duracion_min=0.0,
+                    operarios_afectados=0,
+                    lineas_afectadas=[]
                 ))
-                
-                # Generar recomendaciones
-                if motivo == 'Sin Materiales' and pausa['total_pausas'] > 20:
-                    recomendaciones.append(Recomendacion(
-                        mensaje="Revisar cadena de suministro de materiales"
+                recomendaciones.append(Recomendacion(
+                    mensaje="No se registraron pausas en este periodo. Esto puede indicar buena disponibilidad operativa."
+                ))
+            else:
+                for pausa in pausas_data:
+                    motivo = pausa['motivo'] or 'Sin motivo'
+                    lineas = pausa['lineas_afectadas'] or []
+                    
+                    pausas_por_motivo.append(PausasPorMotivo(
+                        motivo=motivo,
+                        total_pausas=pausa['total_pausas'],
+                        tiempo_total_min=float(pausa['tiempo_total_min']),
+                        promedio_duracion_min=float(pausa['promedio_duracion_min']),
+                        operarios_afectados=pausa['operarios_afectados'],
+                        lineas_afectadas=list(lineas) if lineas else []
                     ))
-                elif motivo == 'Falla Técnica - Máquina' and pausa['total_pausas'] > 10:
-                    lineas_str = ', '.join(lineas) if lineas else 'las líneas afectadas'
-                    recomendaciones.append(Recomendacion(
-                        mensaje=f"Mantenimiento preventivo en {lineas_str}"
-                    ))
+                    
+                    # Generar recomendaciones
+                    if motivo == 'Sin Materiales' and pausa['total_pausas'] > 20:
+                        recomendaciones.append(Recomendacion(
+                            mensaje="Revisar cadena de suministro de materiales"
+                        ))
+                    elif motivo == 'Falla Técnica - Máquina' and pausa['total_pausas'] > 10:
+                        lineas_str = ', '.join(lineas) if lineas else 'las líneas afectadas'
+                        recomendaciones.append(Recomendacion(
+                            mensaje=f"Mantenimiento preventivo en {lineas_str}"
+                        ))
             
             return ReportePausasResponse(
                 periodo=f"{fecha_inicio} a {fecha_fin}",
@@ -1100,9 +1184,17 @@ async def obtener_reporte_cuellos_botella(fecha: str):
                 # Determinar impacto en la línea
                 impacto = "Afecta a estaciones siguientes"
                 if cuello['estacion']:
-                    num_estacion = int(cuello['estacion'].split()[-1]) if cuello['estacion'] else 0
-                    if num_estacion > 0:
-                        impacto = f"Afecta a {num_estacion} estaciones siguientes"
+                    try:
+                        num_estacion = int(cuello['estacion'].split()[-1])
+                        if num_estacion > 0:
+                            impacto = f"Afecta a {num_estacion} estaciones siguientes"
+                    except:
+                        pass
+                
+                # Agregar información histórica
+                total_ciclos = cuello.get('total_ciclos_lentos', 0)
+                if total_ciclos > 0:
+                    impacto += f" ({total_ciclos} ciclos lentos registrados)"
                 
                 cuellos_botella.append(CuelloBotella(
                     operario=cuello['nombre'],

@@ -522,6 +522,12 @@
             background: #fff5f5;
         }
 
+        .operario-dashboard-card.pausa {
+            border-color: #f6ad55;
+            background: #fffaf0;
+            border-width: 3px;
+        }
+
         /* ============================================ */
         /* PANTALLA DE REPORTES */
         /* ============================================ */
@@ -745,6 +751,17 @@
                 </button>
                 <button style="background: #fc8181; color: white; flex: 1;" onclick="cerrarSesion()">
                     Cerrar Sesión
+                </button>
+            </div>
+
+            <div style="background: white; padding: 15px; border-radius: 10px; margin-bottom: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                <input type="text" id="filtroLinea" placeholder="Filtrar por línea..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
+                <input type="text" id="filtroEstacion" placeholder="Filtrar por estación..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
+                <input type="text" id="filtroTarea" placeholder="Filtrar por tarea..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
+                <input type="number" id="filtroID" placeholder="Filtrar por ID..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
+                <input type="text" id="filtroNombre" placeholder="Filtrar por nombre..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
+                <button onclick="limpiarFiltros()" style="padding: 10px; background: #cbd5e0; color: #2d3748; border: none; border-radius: 8px; font-size: 14px; cursor: pointer;">
+                    🗑️ Limpiar Filtros
                 </button>
             </div>
 
@@ -1184,9 +1201,24 @@
                 
                 console.log('🔍 Buscando datos para fecha:', fecha);
                 
+                // Obtener filtros
+                const filtroLinea = document.getElementById('filtroLinea')?.value || '';
+                const filtroEstacion = document.getElementById('filtroEstacion')?.value || '';
+                const filtroTarea = document.getElementById('filtroTarea')?.value || '';
+                const filtroID = document.getElementById('filtroID')?.value || '';
+                const filtroNombre = document.getElementById('filtroNombre')?.value || '';
+                
+                // Construir URL con filtros
+                let url = `${API_URL}/api/dashboard/resumen?fecha=${fecha}`;
+                if (filtroLinea) url += `&linea_produccion=${encodeURIComponent(filtroLinea)}`;
+                if (filtroEstacion) url += `&estacion=${encodeURIComponent(filtroEstacion)}`;
+                if (filtroTarea) url += `&tarea=${encodeURIComponent(filtroTarea)}`;
+                if (filtroID) url += `&id_operario=${encodeURIComponent(filtroID)}`;
+                if (filtroNombre) url += `&nombre=${encodeURIComponent(filtroNombre)}`;
+                
                 // Si hay fecha seleccionada, usar el endpoint de resumen
                 if (fecha) {
-                    const response = await fetch(`${API_URL}/api/dashboard/resumen?fecha=${fecha}`);
+                    const response = await fetch(url);
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({ detail: 'Error desconocido' }));
                         console.error('❌ Error al cargar dashboard:', errorData);
@@ -1229,20 +1261,41 @@
                     // Mostrar operarios
                     data.operarios.forEach(op => {
                         const card = document.createElement('div');
-                        card.className = `operario-dashboard-card ${op.estado.toLowerCase()}`;
+                        // Determinar clase CSS según estado y pausa
+                        let cardClass = `operario-dashboard-card ${op.estado.toLowerCase()}`;
+                        if (op.en_pausa) {
+                            cardClass += ' pausa';
+                        }
+                        card.className = cardClass;
                         
                         let estadoEmoji = '👍';
                         if (op.estado === 'Excelente') estadoEmoji = '🎉';
                         if (op.estado === 'Lento') estadoEmoji = '⚠️';
                         
+                        // Información adicional
+                        let infoAdicional = '';
+                        if (op.linea_produccion) infoAdicional += `<p><strong>Línea:</strong> ${op.linea_produccion}</p>`;
+                        if (op.estacion) infoAdicional += `<p><strong>Estación:</strong> ${op.estacion}</p>`;
+                        if (op.tarea) infoAdicional += `<p><strong>Tarea:</strong> ${op.tarea}</p>`;
+                        
+                        // Indicador de pausa activa
+                        let pausaActivaHTML = '';
+                        if (op.en_pausa) {
+                            pausaActivaHTML = `<p style="background: #f6ad55; color: white; padding: 8px; border-radius: 5px; font-weight: bold; margin-top: 10px;">
+                                ⏸️ EN PAUSA: ${op.motivo_pausa || 'Sin motivo'}
+                            </p>`;
+                        }
+                        
                         card.innerHTML = `
                             <h3>${op.nombre}</h3>
                             <p><strong>ID:</strong> ${op.id_operario}</p>
+                            ${infoAdicional}
                             <p><strong>Ciclos:</strong> ${op.ciclos}</p>
                             <p><strong>Promedio:</strong> ${op.promedio ? op.promedio.toFixed(1) + 's' : '--'}</p>
                             <p><strong>Estado:</strong> ${estadoEmoji} ${op.estado}</p>
                             <p><strong>Eficiencia:</strong> ${op.eficiencia ? op.eficiencia.toFixed(1) + '%' : '--'}</p>
                             <p><strong>Pausas:</strong> ${op.pausas} (${op.tiempo_pausas_min.toFixed(0)} min)</p>
+                            ${pausaActivaHTML}
                         `;
                         
                         grid.appendChild(card);
@@ -1304,6 +1357,18 @@
         }
 
         // ============================================================================
+        // FUNCIONES DE FILTROS
+        // ============================================================================
+        function limpiarFiltros() {
+            document.getElementById('filtroLinea').value = '';
+            document.getElementById('filtroEstacion').value = '';
+            document.getElementById('filtroTarea').value = '';
+            document.getElementById('filtroID').value = '';
+            document.getElementById('filtroNombre').value = '';
+            cargarDashboard();
+        }
+
+        // ============================================================================
         // REPORTES IT
         // ============================================================================
         async function cargarReportes() {
@@ -1333,45 +1398,56 @@
                 const cardPausas = document.createElement('div');
                 cardPausas.className = 'reporte-card';
                 cardPausas.style.cssText = 'grid-column: 1 / -1;';
-                cardPausas.innerHTML = `<h3>📊 Análisis de Pausas (${dataPausas.periodo})</h3>`;
+                cardPausas.innerHTML = `<h3>📊 Análisis de Pausas (${dataPausas.periodo || 'Periodo seleccionado'})</h3>`;
                 
                 if (dataPausas.pausas_por_motivo && dataPausas.pausas_por_motivo.length > 0) {
-                    const graficaDiv = document.createElement('div');
-                    graficaDiv.className = 'grafica-container';
+                    // Verificar si hay datos reales o solo el mensaje de "sin pausas"
+                    const tieneDatosReales = dataPausas.pausas_por_motivo.some(p => p.total_pausas > 0);
                     
-                    dataPausas.pausas_por_motivo.forEach(pausa => {
-                        const maxPausas = Math.max(...dataPausas.pausas_por_motivo.map(p => p.total_pausas));
-                        const porcentaje = (pausa.total_pausas / maxPausas) * 100;
+                    if (!tieneDatosReales) {
+                        cardPausas.innerHTML += '<p style="padding: 20px; background: #f0fff4; border-radius: 10px; color: #2f855a;">✅ No se registraron pausas en este periodo. Esto indica buena disponibilidad operativa.</p>';
+                    } else {
+                        const graficaDiv = document.createElement('div');
+                        graficaDiv.className = 'grafica-container';
                         
-                        const barra = document.createElement('div');
-                        barra.className = 'barra-grafica';
-                        barra.innerHTML = `
-                            <div class="barra-grafica-label">${pausa.motivo}</div>
-                            <div class="barra-grafica-bar" style="width: ${porcentaje}%; background: #4299e1;">
-                                ${pausa.total_pausas} pausas
-                            </div>
-                            <div style="width: 100px; font-size: 12px; color: #718096;">
-                                ${pausa.tiempo_total_min.toFixed(0)} min
-                            </div>
-                        `;
-                        graficaDiv.appendChild(barra);
-                    });
-                    
-                    cardPausas.appendChild(graficaDiv);
-                    
-                    // Mostrar recomendaciones
-                    if (dataPausas.recomendaciones && dataPausas.recomendaciones.length > 0) {
-                        const recomendacionesDiv = document.createElement('div');
-                        recomendacionesDiv.style.cssText = 'margin-top: 20px; padding: 15px; background: #f0fff4; border-radius: 10px; border-left: 4px solid #48bb78;';
-                        recomendacionesDiv.innerHTML = '<strong>💡 Recomendaciones:</strong><ul style="margin-top: 10px; padding-left: 20px;">';
-                        dataPausas.recomendaciones.forEach(rec => {
-                            recomendacionesDiv.innerHTML += `<li>${rec.mensaje}</li>`;
+                        dataPausas.pausas_por_motivo.forEach(pausa => {
+                            if (pausa.total_pausas > 0) {
+                                const maxPausas = Math.max(...dataPausas.pausas_por_motivo.filter(p => p.total_pausas > 0).map(p => p.total_pausas));
+                                const porcentaje = maxPausas > 0 ? (pausa.total_pausas / maxPausas) * 100 : 0;
+                                
+                                const barra = document.createElement('div');
+                                barra.className = 'barra-grafica';
+                                barra.innerHTML = `
+                                    <div class="barra-grafica-label">${pausa.motivo}</div>
+                                    <div class="barra-grafica-bar" style="width: ${porcentaje}%; background: #4299e1;">
+                                        ${pausa.total_pausas} pausas
+                                    </div>
+                                    <div style="width: 100px; font-size: 12px; color: #718096;">
+                                        ${pausa.tiempo_total_min.toFixed(0)} min
+                                    </div>
+                                `;
+                                graficaDiv.appendChild(barra);
+                            }
                         });
-                        recomendacionesDiv.innerHTML += '</ul>';
-                        cardPausas.appendChild(recomendacionesDiv);
+                        
+                        if (graficaDiv.children.length > 0) {
+                            cardPausas.appendChild(graficaDiv);
+                        }
+                        
+                        // Mostrar recomendaciones
+                        if (dataPausas.recomendaciones && dataPausas.recomendaciones.length > 0) {
+                            const recomendacionesDiv = document.createElement('div');
+                            recomendacionesDiv.style.cssText = 'margin-top: 20px; padding: 15px; background: #f0fff4; border-radius: 10px; border-left: 4px solid #48bb78;';
+                            recomendacionesDiv.innerHTML = '<strong>💡 Recomendaciones:</strong><ul style="margin-top: 10px; padding-left: 20px;">';
+                            dataPausas.recomendaciones.forEach(rec => {
+                                recomendacionesDiv.innerHTML += `<li>${rec.mensaje}</li>`;
+                            });
+                            recomendacionesDiv.innerHTML += '</ul>';
+                            cardPausas.appendChild(recomendacionesDiv);
+                        }
                     }
                 } else {
-                    cardPausas.innerHTML += '<p>No hay datos de pausas en este periodo</p>';
+                    cardPausas.innerHTML += '<p style="padding: 20px; background: #f0fff4; border-radius: 10px; color: #2f855a;">✅ No hay datos de pausas en este periodo</p>';
                 }
                 
                 content.appendChild(cardPausas);
