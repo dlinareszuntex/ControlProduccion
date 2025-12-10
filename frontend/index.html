@@ -526,6 +526,22 @@
             border-color: #f6ad55;
             background: #fffaf0;
             border-width: 3px;
+            box-shadow: 0 0 10px rgba(246, 173, 85, 0.3);
+        }
+        
+        .operario-dashboard-card.pausa h3 {
+            color: #c05621;
+        }
+        
+        .indicador-pausa-activa {
+            background: linear-gradient(135deg, #f6ad55 0%, #ed8936 100%);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-weight: bold;
+            margin-top: 10px;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(246, 173, 85, 0.4);
         }
 
         /* ============================================ */
@@ -755,11 +771,21 @@
             </div>
 
             <div style="background: white; padding: 15px; border-radius: 10px; margin-bottom: 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
-                <input type="text" id="filtroLinea" placeholder="Filtrar por línea..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
-                <input type="text" id="filtroEstacion" placeholder="Filtrar por estación..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
-                <input type="text" id="filtroTarea" placeholder="Filtrar por tarea..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
-                <input type="number" id="filtroID" placeholder="Filtrar por ID..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
-                <input type="text" id="filtroNombre" placeholder="Filtrar por nombre..." style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
+                <select id="filtroLinea" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px; background: white; cursor: pointer;">
+                    <option value="">Todas las líneas</option>
+                </select>
+                <select id="filtroEstacion" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px; background: white; cursor: pointer;">
+                    <option value="">Todas las estaciones</option>
+                </select>
+                <select id="filtroTarea" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px; background: white; cursor: pointer;">
+                    <option value="">Todas las tareas</option>
+                </select>
+                <select id="filtroID" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px; background: white; cursor: pointer;">
+                    <option value="">Todos los IDs</option>
+                </select>
+                <select id="filtroNombre" style="padding: 10px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 14px; background: white; cursor: pointer;">
+                    <option value="">Todos los nombres</option>
+                </select>
                 <button onclick="limpiarFiltros()" style="padding: 10px; background: #cbd5e0; color: #2d3748; border: none; border-radius: 8px; font-size: 14px; cursor: pointer;">
                     🗑️ Limpiar Filtros
                 </button>
@@ -968,6 +994,12 @@
             if (fechaFiltro) fechaFiltro.value = hoy;
             if (fechaInicioReporte) fechaInicioReporte.value = hoy;
             if (fechaFinReporte) fechaFinReporte.value = hoy;
+            
+            // Cargar opciones de filtros
+            await cargarOpcionesFiltros();
+            
+            // Configurar event listeners para filtros
+            configurarFiltrosAuto();
             
             await cargarDashboard();
             mostrarPantalla('dashboardScreen');
@@ -1201,20 +1233,30 @@
                 
                 console.log('🔍 Buscando datos para fecha:', fecha);
                 
-                // Obtener filtros
+                // Obtener filtros (solo los que tienen valor seleccionado)
                 const filtroLinea = document.getElementById('filtroLinea')?.value || '';
                 const filtroEstacion = document.getElementById('filtroEstacion')?.value || '';
                 const filtroTarea = document.getElementById('filtroTarea')?.value || '';
                 const filtroID = document.getElementById('filtroID')?.value || '';
                 const filtroNombre = document.getElementById('filtroNombre')?.value || '';
                 
-                // Construir URL con filtros
+                // Construir URL con filtros (solo agregar los que tienen valor)
                 let url = `${API_URL}/api/dashboard/resumen?fecha=${fecha}`;
-                if (filtroLinea) url += `&linea_produccion=${encodeURIComponent(filtroLinea)}`;
-                if (filtroEstacion) url += `&estacion=${encodeURIComponent(filtroEstacion)}`;
-                if (filtroTarea) url += `&tarea=${encodeURIComponent(filtroTarea)}`;
-                if (filtroID) url += `&id_operario=${encodeURIComponent(filtroID)}`;
-                if (filtroNombre) url += `&nombre=${encodeURIComponent(filtroNombre)}`;
+                if (filtroLinea && filtroLinea !== '') {
+                    url += `&linea_produccion=${encodeURIComponent(filtroLinea)}`;
+                }
+                if (filtroEstacion && filtroEstacion !== '') {
+                    url += `&estacion=${encodeURIComponent(filtroEstacion)}`;
+                }
+                if (filtroTarea && filtroTarea !== '') {
+                    url += `&tarea=${encodeURIComponent(filtroTarea)}`;
+                }
+                if (filtroID && filtroID !== '') {
+                    url += `&id_operario=${encodeURIComponent(filtroID)}`;
+                }
+                if (filtroNombre && filtroNombre !== '') {
+                    url += `&nombre=${encodeURIComponent(filtroNombre)}`;
+                }
                 
                 // Si hay fecha seleccionada, usar el endpoint de resumen
                 if (fecha) {
@@ -1262,9 +1304,12 @@
                     data.operarios.forEach(op => {
                         const card = document.createElement('div');
                         // Determinar clase CSS según estado y pausa
-                        let cardClass = `operario-dashboard-card ${op.estado.toLowerCase()}`;
+                        // Si está en pausa, el color naranja tiene prioridad sobre el estado
+                        let cardClass = 'operario-dashboard-card';
                         if (op.en_pausa) {
                             cardClass += ' pausa';
+                        } else {
+                            cardClass += ` ${op.estado.toLowerCase()}`;
                         }
                         card.className = cardClass;
                         
@@ -1278,12 +1323,24 @@
                         if (op.estacion) infoAdicional += `<p><strong>Estación:</strong> ${op.estacion}</p>`;
                         if (op.tarea) infoAdicional += `<p><strong>Tarea:</strong> ${op.tarea}</p>`;
                         
-                        // Indicador de pausa activa
+                        // Indicador de pausa activa - más visible y con motivo
                         let pausaActivaHTML = '';
                         if (op.en_pausa) {
-                            pausaActivaHTML = `<p style="background: #f6ad55; color: white; padding: 8px; border-radius: 5px; font-weight: bold; margin-top: 10px;">
-                                ⏸️ EN PAUSA: ${op.motivo_pausa || 'Sin motivo'}
-                            </p>`;
+                            const motivo = op.motivo_pausa || 'Sin motivo especificado';
+                            pausaActivaHTML = `
+                                <div class="indicador-pausa-activa">
+                                    ⏸️ EN PAUSA ACTIVA<br>
+                                    <span style="font-size: 0.9em; opacity: 0.95;">Motivo: ${motivo}</span>
+                                </div>
+                            `;
+                        }
+                        
+                        // Información de pausas históricas (solo si no está en pausa activa)
+                        let pausasHistoricasHTML = '';
+                        if (!op.en_pausa && op.pausas > 0) {
+                            pausasHistoricasHTML = `<p><strong>Pausas del día:</strong> ${op.pausas} pausas (${op.tiempo_pausas_min.toFixed(0)} min total)</p>`;
+                        } else if (!op.en_pausa) {
+                            pausasHistoricasHTML = `<p><strong>Pausas del día:</strong> ${op.pausas} pausas</p>`;
                         }
                         
                         card.innerHTML = `
@@ -1294,7 +1351,7 @@
                             <p><strong>Promedio:</strong> ${op.promedio ? op.promedio.toFixed(1) + 's' : '--'}</p>
                             <p><strong>Estado:</strong> ${estadoEmoji} ${op.estado}</p>
                             <p><strong>Eficiencia:</strong> ${op.eficiencia ? op.eficiencia.toFixed(1) + '%' : '--'}</p>
-                            <p><strong>Pausas:</strong> ${op.pausas} (${op.tiempo_pausas_min.toFixed(0)} min)</p>
+                            ${pausasHistoricasHTML}
                             ${pausaActivaHTML}
                         `;
                         
@@ -1359,6 +1416,76 @@
         // ============================================================================
         // FUNCIONES DE FILTROS
         // ============================================================================
+        async function cargarOpcionesFiltros() {
+            try {
+                const response = await fetch(`${API_URL}/api/filtros/opciones`);
+                if (!response.ok) {
+                    console.error('Error al cargar opciones de filtros');
+                    return;
+                }
+                
+                const opciones = await response.json();
+                
+                // Cargar líneas de producción
+                const selectLinea = document.getElementById('filtroLinea');
+                if (selectLinea && opciones.lineas_produccion) {
+                    opciones.lineas_produccion.forEach(linea => {
+                        const option = document.createElement('option');
+                        option.value = linea;
+                        option.textContent = linea;
+                        selectLinea.appendChild(option);
+                    });
+                }
+                
+                // Cargar estaciones
+                const selectEstacion = document.getElementById('filtroEstacion');
+                if (selectEstacion && opciones.estaciones) {
+                    opciones.estaciones.forEach(estacion => {
+                        const option = document.createElement('option');
+                        option.value = estacion;
+                        option.textContent = estacion;
+                        selectEstacion.appendChild(option);
+                    });
+                }
+                
+                // Cargar tareas
+                const selectTarea = document.getElementById('filtroTarea');
+                if (selectTarea && opciones.tareas) {
+                    opciones.tareas.forEach(tarea => {
+                        const option = document.createElement('option');
+                        option.value = tarea;
+                        option.textContent = tarea;
+                        selectTarea.appendChild(option);
+                    });
+                }
+                
+                // Cargar IDs de operarios
+                const selectID = document.getElementById('filtroID');
+                if (selectID && opciones.ids_operarios) {
+                    opciones.ids_operarios.forEach(op => {
+                        const option = document.createElement('option');
+                        option.value = op.id;
+                        option.textContent = `${op.id} - ${op.nombre}`;
+                        selectID.appendChild(option);
+                    });
+                }
+                
+                // Cargar nombres de operarios
+                const selectNombre = document.getElementById('filtroNombre');
+                if (selectNombre && opciones.nombres) {
+                    opciones.nombres.forEach(op => {
+                        const option = document.createElement('option');
+                        option.value = op.nombre;
+                        option.textContent = `${op.nombre} (ID: ${op.id})`;
+                        selectNombre.appendChild(option);
+                    });
+                }
+                
+            } catch (error) {
+                console.error('Error al cargar opciones de filtros:', error);
+            }
+        }
+
         function limpiarFiltros() {
             document.getElementById('filtroLinea').value = '';
             document.getElementById('filtroEstacion').value = '';
@@ -1366,6 +1493,19 @@
             document.getElementById('filtroID').value = '';
             document.getElementById('filtroNombre').value = '';
             cargarDashboard();
+        }
+        
+        // Agregar event listeners para aplicar filtros automáticamente al cambiar
+        function configurarFiltrosAuto() {
+            const filtros = ['filtroLinea', 'filtroEstacion', 'filtroTarea', 'filtroID', 'filtroNombre'];
+            filtros.forEach(id => {
+                const elemento = document.getElementById(id);
+                if (elemento) {
+                    elemento.addEventListener('change', () => {
+                        cargarDashboard();
+                    });
+                }
+            });
         }
 
         // ============================================================================

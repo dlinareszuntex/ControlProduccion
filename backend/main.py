@@ -598,6 +598,75 @@ async def listar_operarios():
             detail=f"Error al listar operarios: {str(e)}"
         )
 
+@app.get("/api/filtros/opciones")
+async def obtener_opciones_filtros():
+    """
+    Obtiene las opciones disponibles para los filtros del dashboard IT.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Obtener líneas de producción únicas
+            cursor.execute("""
+                SELECT DISTINCT linea_produccion
+                FROM Operarios
+                WHERE activo = TRUE AND linea_produccion IS NOT NULL
+                ORDER BY linea_produccion
+            """)
+            lineas = [row['linea_produccion'] for row in cursor.fetchall()]
+            
+            # Obtener estaciones únicas
+            cursor.execute("""
+                SELECT DISTINCT estacion
+                FROM Operarios
+                WHERE activo = TRUE AND estacion IS NOT NULL
+                ORDER BY estacion
+            """)
+            estaciones = [row['estacion'] for row in cursor.fetchall()]
+            
+            # Obtener tareas únicas
+            cursor.execute("""
+                SELECT DISTINCT t.nombre_tarea
+                FROM Tareas t
+                JOIN Operario_Tarea ot ON t.id_tarea = ot.id_tarea
+                WHERE ot.activa = TRUE AND t.activa = TRUE
+                ORDER BY t.nombre_tarea
+            """)
+            tareas = [row['nombre_tarea'] for row in cursor.fetchall()]
+            
+            # Obtener nombres de operarios
+            cursor.execute("""
+                SELECT DISTINCT nombre, id_operario
+                FROM Operarios
+                WHERE activo = TRUE
+                ORDER BY nombre
+            """)
+            nombres = [{'nombre': row['nombre'], 'id': row['id_operario']} for row in cursor.fetchall()]
+            
+            # Obtener IDs de operarios
+            cursor.execute("""
+                SELECT DISTINCT id_operario, nombre
+                FROM Operarios
+                WHERE activo = TRUE
+                ORDER BY id_operario
+            """)
+            ids_operarios = [{'id': row['id_operario'], 'nombre': row['nombre']} for row in cursor.fetchall()]
+            
+            return {
+                "lineas_produccion": lineas,
+                "estaciones": estaciones,
+                "tareas": tareas,
+                "nombres": nombres,
+                "ids_operarios": ids_operarios
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al obtener opciones de filtros: {str(e)}"
+        )
+
 @app.get("/api/dashboard", response_model=list[DashboardOperario])
 async def obtener_dashboard():
     """
@@ -929,7 +998,11 @@ async def obtener_dashboard_resumen(
             where_clause = " AND ".join(condiciones_filtro)
             
             # Obtener detalle de operarios con información completa
-            # Construir la query sin f-string para evitar problemas con %s
+            # Construir la query con parámetros en el orden correcto
+            # IMPORTANTE: Los parámetros deben estar en el orden que aparecen los %s en la query
+            # 1. Primero los filtros del WHERE clause
+            # 2. Luego las 6 fechas para las subconsultas
+            
             query = """
                 SELECT 
                     o.id_operario,
@@ -997,8 +1070,19 @@ async def obtener_dashboard_resumen(
                 ORDER BY o.nombre
             """
             
-            # Combinar parámetros: primero los filtros, luego las 6 fechas para las subconsultas
-            parametros_totales = parametros_filtro + [fecha, fecha, fecha, fecha, fecha, fecha]
+            # Construir lista de parámetros en el orden correcto:
+            # IMPORTANTE: Los placeholders %s se reemplazan en el orden que aparecen en la query
+            # En la query, primero aparecen los 6 %s::date en las subconsultas (antes del WHERE)
+            # Luego aparecen los %s del WHERE clause
+            # Por lo tanto: primero las 6 fechas, luego los filtros
+            parametros_totales = [fecha, fecha, fecha, fecha, fecha, fecha] + list(parametros_filtro)
+            
+            print(f"🔍 [DEBUG] Parámetros filtro: {parametros_filtro}")
+            print(f"🔍 [DEBUG] Parámetros totales: {len(parametros_totales)} parámetros")
+            print(f"🔍 [DEBUG] Query WHERE clause: {where_clause}")
+            print(f"🔍 [DEBUG] Primeros 3 parámetros: {parametros_totales[:3]}")
+            print(f"🔍 [DEBUG] Últimos parámetros: {parametros_totales[-3:]}")
+            
             cursor.execute(query, tuple(parametros_totales))
             
             operarios_data = cursor.fetchall()
